@@ -1,103 +1,131 @@
 // log level
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub enum Level {
-    Debug,
-    Info,
-    Warn,
-    Error,
+pub mod level {
+    use std::fmt::Display;
+
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+    pub enum Level {
+        Debug,
+        Info,
+        Warn,
+        Error,
+    }
+    
+    impl Display for Level {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "[{:#?}]", self)
+        }
+    }
 }
 
 // log message
-pub struct Message {
-    level: String,
-    message: String,
-    format: Vec<LogField>,
-}
+pub mod message {
+    use std::fmt::Display;
 
-impl Message {
-    pub fn log_to_std(&self) {}
-    pub fn log_to_file(&self, path: String) -> Result<(), std::io::Error> {
-        Ok(())
+    use crate::{log_field::LogField, level::Level};
+
+    #[derive(Clone)]
+    pub struct Message {
+        level: Level,
+        message: String,
+        format: Vec<LogField>,
     }
-    pub fn generate__string(&self) -> String {
-        String::new()
-    }
-}
-
-pub enum LogField {
-    Time,
-    Date,
-    Event,
-    Message,
-    Seperator(char),
-}
-
-// logger struct
-pub struct Logger {
-    // logging level
-    level_std: Level,
-    level_io: Level,
-    // path for file logging
-    path_io: Option<String>,
-    // formatting
-    format_std: Vec<LogField>,
-    format_io: Vec<LogField>,
-}
-
-// logger implementation
-impl Logger {
-    pub fn new(
-        level_std: Level,
-        level_io: Level,
-        path_io: Option<String>,
-        format_std: Vec<LogField>,
-        format_io: Vec<LogField>,
-    ) -> Self {
-        Self {
-            level_std,
-            level_io,
-            path_io,
-            format_std,
-            format_io,
+    
+    impl Message {
+        pub fn new(level: Level, message: String, format: Vec<LogField>) -> Self {
+            Self { level, message, format }
+        }
+    
+        pub fn handle_formatter(&self, formatter: &LogField) -> String {
+            match formatter {
+                LogField::Time => chrono::Local::now().format("%Y-%m-%d").to_string(),
+                LogField::Date => chrono::Local::now().format("%H:%M:%S.%3f").to_string(),
+                LogField::Level => self.level.to_string(),
+                LogField::Message => self.message.clone(),
+                LogField::Seperator(separator) => separator.to_owned(),
+            }
         }
     }
 
-    pub fn log(&self, level: Level, content: String) {
-        // log to file
-        if self.path_io.is_some() && self.level_comparison(&self.level_io, &level) {}
-        // log to std
-        if self.level_comparison(&self.level_std, &level) {}
+    impl Display for Message {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let string = self.format.iter().map(|formatter| self.handle_formatter(formatter)).collect::<Vec<String>>().join("");
+            write!(f, "{}\n", string)
+        }
     }
+}
 
-    // determines if the given log level should be logged
-    pub fn level_comparison(&self, current: &Level, given_level: &Level) -> bool {
-        current <= given_level
+// log fields
+pub mod log_field {
+    #[derive(Clone)]
+    pub enum LogField {
+        Time,
+        Date,
+        Level,
+        Message,
+        Seperator(String),
+    }
+}
+
+// logger struct
+pub mod logger {
+    use crate::{level::Level, log_field::LogField, message::Message};
+
+    pub struct Logger {
+        // logging level
+        max_level: Level,
+        // logging handle
+        writers: Vec<Box<dyn std::io::Write>>,
+        // formatting
+        format: Vec<LogField>,
+    }
+    
+    // logger implementation
+    impl Logger {
+        pub fn new(
+            max_level: Level,
+            writers: Vec<Box<dyn std::io::Write>>,
+            format: Vec<LogField>,
+        ) -> Self {
+            Self {
+                max_level,
+                writers,
+                format,
+            }
+        }
+    
+        pub fn log(&mut self, level: Level, content: String) -> std::io::Result<()> {
+            let message = Message::new(level.clone(), content, self.format.clone());
+            for writer in &mut self.writers {
+                if self.max_level <= level {
+                    writer.write_all(message.clone().to_string().as_bytes())?;
+                }
+            }
+            Ok(())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{level::Level, logger::Logger, log_field::LogField::*};
 
     #[test]
-    pub fn higher_loglevel() {
-        let logger = Logger::new(Level::Info, Level::Debug, None, Vec::new(), Vec::new());
-        assert_eq!(true, logger.level_comparison(&Level::Info, &Level::Error));
+    pub fn level_format() {
+        assert_eq!("[Info]", format!("{}", Level::Info.to_string()))
     }
 
     #[test]
-    pub fn same_loglevel() {
-        let logger = Logger::new(Level::Info, Level::Debug, None, Vec::new(), Vec::new());
-        assert_eq!(true, logger.level_comparison(&Level::Info, &Level::Info));
-    }
-
-    #[test]
-    pub fn lower_loglevel() {
-        let logger = Logger::new(Level::Info, Level::Debug, None, Vec::new(), Vec::new());
-        assert_eq!(false, logger.level_comparison(&Level::Info, &Level::Debug));
+    pub fn test() {
+        let format = vec![
+            Date,
+            Seperator(String::from("T")),
+            Time,
+            Seperator(String::from(" ")),
+            Level,
+            Seperator(String::from(" ")),
+            Message
+        ];
+        let mut logger = Logger::new(Level::Info, vec![Box::new(std::io::stdout())], format);
+        logger.log(Level::Info, "we logging".to_owned()).unwrap();
     }
 }
-
-// mod logger {
-//     use super::*;
-// }
